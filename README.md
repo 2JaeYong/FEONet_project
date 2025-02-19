@@ -15,10 +15,12 @@ FeniCS_assemble.ipynb
 
 ### Step2 - Save the train and test data by interpolation.
 Using the 'create_data_interpol.py' code, you can interpolate using exact data.
-'''
+```
 python3 create_data_interpol.py --type varcoeff --num_data 1000 --basis_order 2 --kind train --ne 32 --ne_exact 300
+```
+```
 python3 create_data_interpol.py --type varcoeff --num_data 1000 --basis_order 2 --kind validate --ne 32 --ne_exact 300
-'''
+```
 
 ### Step3 - Train the FEONet
 ```
@@ -39,10 +41,12 @@ FeniCS_assemble.ipynb
 
 ### Step2 - Save the train and test data by interpolation.
 Using the 'create_data_interpol.py' code, you can interpolate using exact data.
-'''
+```
 python3 create_data_interpol.py --type burgers --num_data 3000 --basis_order 1 --kind train --ne 128 --ne_exact 512
+```
+```
 python3 create_data_interpol.py --type burgers --num_data 3000 --basis_order 1 --kind validate --ne 128 --ne_exact 512
-'''
+```
 
 ### Step3 - Train the FEONet
 ```
@@ -62,10 +66,12 @@ FeniCS_assemble.ipynb
 
 ### Step2 - Save the train and test data by interpolation.
 Using the 'create_data_interpol.py' code, you can interpolate using exact data.
-'''
+```
 python3 create_data_interpol.py --type circlehole --num_data 1000 --basis_order 2 --kind train --ne 555 --ne_exact 1530
+```
+```
 python3 create_data_interpol.py --type circlehole --num_data 1000 --basis_order 2 --kind validate --ne 555 --ne_exact 1530
-'''
+```
 
 ### Step3 - Train the FEONet
 W/o preconditioning
