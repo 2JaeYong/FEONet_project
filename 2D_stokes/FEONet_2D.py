@@ -14,17 +14,17 @@ from models import *
 
 
 # ARGS
-parser = argparse.ArgumentParser("1D_variable_coefficient")
+parser = argparse.ArgumentParser("2D_circlehole")
 parser.add_argument('name', type=str, help='experiments name')
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--use_squeue", action='store_true')
 parser.add_argument("--gpu", type=int, default=0)
 
 ## Data
-parser.add_argument("--type", type=str, choices=['varcoeff','burgers','circlehole'])
+parser.add_argument("--type", type=str, choices=['stokes'])
 parser.add_argument("--num_train_data", type=int, default=3000)
 parser.add_argument("--num_validate_data", type=int, default=3000)
-parser.add_argument("--basis_order", type=int, default=1, help='P1->d=1, P2->d=2')
+parser.add_argument("--basis_order", type=str)
 parser.add_argument("--ne", type=int, default=32)
 
 ## Train parameters
@@ -36,6 +36,7 @@ parser.add_argument("--ks", type=int, default=5)
 parser.add_argument("--filters", type=int, default=32, choices=[8, 16, 32, 64])
 parser.add_argument("--act", type=str, default='silu')
 parser.add_argument("--epochs", type=int, default=80000)
+parser.add_argument('--do_precond', action='store_true')
 
 args = parser.parse_args()
 gparams = args.__dict__
@@ -58,22 +59,25 @@ if not gparams['use_squeue']:
     if use_cuda:
         print("-> GPU number ",gpu_id)
 
-#Equation
+##Equation
 TYPE = gparams['type']
 NUM_TRAIN_DATA = gparams['num_train_data']
 NUM_VALIDATE_DATA = gparams['num_validate_data']
 BASIS_ORDER = gparams['basis_order']
 NUM_ELEMENT = gparams['ne']
 
-mesh=np.load(f'mesh/P{BASIS_ORDER}_ne{NUM_ELEMENT}_{TYPE}.npz')
-_, NUM_PTS, p, c = mesh['ne'], mesh['ng'], mesh['p'], mesh['c']
+mesh=np.load(f'mesh/P{BASIS_ORDER}_ne{NUM_ELEMENT}_{TYPE}.npz', allow_pickle=True)
+_, NUM_PTS, p = mesh['ne'], mesh['ng'], mesh['p']
 NUM_BASIS = NUM_PTS
+IDX_SOL = mesh['idx_sol']
 
-STIFF=mesh['stiff']
-CONV=mesh['convection']
-LOAD_VECTOR=mesh['load_vector']
-STIFF, CONV, LOAD_VECTOR = torch.tensor(STIFF).cuda().float(), torch.tensor(CONV).cuda().float(), torch.tensor(LOAD_VECTOR).cuda().float()
+MATRIX=mesh['matrix']
+MATRIX = torch.tensor(MATRIX).cuda().float()
 
+DO_PRECOND=gparams['do_precond']
+if DO_PRECOND==True:
+    PRECOND=mesh['precond']
+    PRECOND = torch.tensor(PRECOND).cuda().float()
 
 #Model
 models = {
@@ -89,9 +93,10 @@ ACT = gparams['act']
 if gparams['model']=='CNN2D':
     RESOL_IN=gparams['resol_in']
 
+
 #Train
 EPOCHS = int(gparams['epochs'])
-D_in = 1
+D_in = 2
 D_out = NUM_BASIS
 
 if gparams['batch_size'] is None: #Full-batch
@@ -109,8 +114,8 @@ PATH = os.path.join('train', FOLDER)
 if os.path.isdir(PATH) == False: os.makedirs(PATH);
 elif os.path.isdir(PATH) == True:
     print("\n\nPATH ALREADY EXISTS!\n\nEXITING\n\n")
-    exit()
-    
+    # exit()
+
 
 class Dataset(Dataset):
     def __init__(self, mesh, kind='train', num_train=False):
@@ -119,13 +124,14 @@ class Dataset(Dataset):
         pickle_file_load = f'{self.kind}_P{BASIS_ORDER}_{NUM_TRAIN_DATA}N{NUM_ELEMENT}_{TYPE}'
         with open(f'data/{pickle_file_load}.pkl', 'rb') as f:
             self.data = pickle.load(f)
-        self.input_matrix = mesh[f'{kind}_matrix']
+        self.load_vector = mesh[f'{kind}_load_vectors']
     def __getitem__(self, idx):
-        coeff_u = torch.FloatTensor(self.data[idx,0]).unsqueeze(0)
-        c_value = torch.FloatTensor(self.data[idx,1]).unsqueeze(0)
-        coeff_c = torch.FloatTensor(self.data[idx,2])
-        input_matrix = torch.FloatTensor(self.input_matrix[idx])
-        return {'coeff_u': coeff_u, 'c_value': c_value, 'coeff_c': coeff_c, 'input_matrix' : input_matrix}
+        coeff_u1 = torch.FloatTensor(self.data[idx,0])
+        coeff_u2 = torch.FloatTensor(self.data[idx,1])
+        coeff_p = torch.FloatTensor(self.data[idx,2])
+        coeff_f = torch.FloatTensor(self.data[idx,3])
+        load_vec_f = torch.FloatTensor(self.load_vector[idx])
+        return {'coeff_u1': coeff_u1, 'coeff_u2': coeff_u2, 'coeff_p': coeff_p, 'coeff_f': coeff_f, 'load_vec_f' : load_vec_f}
 
     def __len__(self):
         if self.kind=='train':
@@ -133,13 +139,13 @@ class Dataset(Dataset):
         else:
             return len(self.data)
         
-
 lg_dataset = Dataset(mesh, kind='train', num_train=NUM_TRAIN_DATA)
 trainloader = DataLoader(lg_dataset, batch_size=BATCH_SIZE_train, shuffle=True)
 lg_dataset = Dataset(mesh, kind='validate')
 validateloader = DataLoader(lg_dataset, batch_size=BATCH_SIZE_validate, shuffle=False)
 
 print("Num train : {}, Num test: {}".format(len(trainloader.dataset), len(validateloader.dataset)))
+
 
 
 if gparams['model']=='CNN2D':
@@ -149,13 +155,13 @@ else:
 
 # SEND TO GPU (or CPU)
 model.cuda()
-    
+
 # KAIMING INITIALIZATION
 def weights_init(m):
     if isinstance(m, nn.Conv1d):
         torch.nn.init.kaiming_normal_(m.weight.data)
         torch.nn.init.zeros_(m.bias)
-        
+
 model.apply(weights_init)
 
 
@@ -170,31 +176,48 @@ def init_optim(model):
 optimizer = init_optim(model)
 
 
-def weak_form(coeff_u, input_matrix, stiff, conv, load_vec):
+
+
+def weak_form(coeff_u, load_vec_f, matrix):
     # pts : N+1
     # num of basis : N+1
     # coeff_u : (num_f, 1, N+1)
     # 
     #return LHS, RHS : (num_f, N+1)
-    coeff_u=coeff_u.repeat(1,coeff_u.shape[-1],1)
+
     ## LHS
-    LHS = (0.1*stiff+conv+input_matrix.squeeze(1))*coeff_u
+    if DO_PRECOND==True:
+       LHS = torch.stack([(matrix@precond).mm(coeff_u_one) for coeff_u_one in coeff_u.transpose(1,2)])
+    else:
+        LHS = torch.stack([matrix.mm(coeff_u_one) for coeff_u_one in coeff_u.transpose(1,2)])
     LHS=torch.sum(LHS,dim=-1)
-    
+
     ## RHS
-    RHS = load_vec.cuda().reshape(1,-1).repeat(coeff_u.shape[0],1)
+    RHS = load_vec_f.cuda()#.float()
     return LHS, RHS
 
 
 
-def closure(model, c_value, input_matrix, stiff, conv, load_vec):
-    pred_coeff_u = model(c_value)
-    LHS, RHS = weak_form(pred_coeff_u, input_matrix, stiff, conv, load_vec)
+def closure(model, coeff_f, load_vec_f, matrix, resol_in):
+    def f(x,y,coeff):
+        m0, m1, n0, n1, n2, n3=coeff[:,[0]], coeff[:,[1]], coeff[:,[2]], coeff[:,[3]], coeff[:,[4]], coeff[:,[5]]
+        return torch.stack([m0*torch.sin(n0*x+n1*y), m1*torch.cos(n2*x+n3*y)],dim=1)
+    grid_x=torch.linspace(0,1,resol_in)
+
+    input_grid=torch.cartesian_prod(grid_x,grid_x)
+    input_grid=input_grid.cuda()
+    value_f=f(input_grid[:,0],input_grid[:,1], coeff_f).reshape(-1,D_in,resol_in,resol_in)
+    pred_coeff_u = model(value_f)
+    LHS, RHS = weak_form(pred_coeff_u, load_vec_f, matrix)
     
     ## Loss : summation on basis functions & mean on funcions f_i
     loss_wf=(LHS-RHS)**2
     loss=loss_wf.sum(dim=-1).mean(dim=-1)
-    return loss, pred_coeff_u
+
+    if DO_PRECOND==True:
+        return  loss, (precond@pred_coeff_u.transpose(1,2)).transpose(1,2)
+    else:
+        return  loss, pred_coeff_u
 
 def rel_L2_error(pred, true):
     return (torch.sum((true-pred)**2, dim=-1)/torch.sum((true)**2, dim=-1))**0.5
@@ -216,71 +239,110 @@ log_gparams(gparams)
 ################################################
 time0 = time.time()
 losses=[]
-train_rel_L2_errors=[]
-test_rel_L2_errors=[]
+train_rel_L2_errors_u1=[]
+train_rel_L2_errors_u2=[]
+train_rel_L2_errors_p=[]
+test_rel_L2_errors_u1=[]
+test_rel_L2_errors_u2=[]
+test_rel_L2_errors_p=[]
 for epoch in range(1, EPOCHS+1):
     model.train()
     loss_total = 0
     num_samples=0
-    train_rel_L2_error = 0
+    train_rel_L2_error_u1 = 0
+    train_rel_L2_error_u2 = 0
+    train_rel_L2_error_p = 0
 
     for batch_idx, sample_batch in enumerate(trainloader):
         optimizer.zero_grad()
-        coeff_u = sample_batch['coeff_u']
-        c_value = sample_batch['c_value'].cuda()
-        input_matrix = sample_batch['input_matrix'].cuda()
-        loss,u_pred = closure(model, c_value, input_matrix, STIFF, CONV, LOAD_VECTOR)
-
+        coeff_u1 = sample_batch['coeff_u1']
+        coeff_u2 = sample_batch['coeff_u2']
+        coeff_p = sample_batch['coeff_p']
+        coeff_f = sample_batch['coeff_f'].cuda()
+        load_vec_f = sample_batch['load_vec_f'].cuda()
+        loss,u_pred = closure(model, coeff_f, load_vec_f, MATRIX, RESOL_IN)
         loss.backward()  
 
         optimizer.step(loss.item)
         loss_total += np.round(float(loss.item()), 4)
-        num_samples += coeff_u.shape[0]
+        num_samples += coeff_u1.shape[0]
 
         with torch.no_grad():
             model.eval()
-            _,u_pred = closure(model, c_value, input_matrix, STIFF, CONV, LOAD_VECTOR)
+            _,u_pred = closure(model, coeff_f, load_vec_f, MATRIX, RESOL_IN)
             u_pred=u_pred.squeeze().detach().cpu()
-            coeff_u=coeff_u.squeeze()
-            train_rel_L2_error += torch.sum(rel_L2_error(u_pred, coeff_u))
+            u1_pred=u_pred[:,torch.tensor(IDX_SOL[0])]
+            u2_pred=u_pred[:,torch.tensor(IDX_SOL[1])]
+            p_pred=u_pred[:,torch.tensor(IDX_SOL[2])]
 
-    train_rel_L2_error /= num_samples
+            train_rel_L2_error_u1 += torch.sum(rel_L2_error(u1_pred, coeff_u1))
+            train_rel_L2_error_u2 += torch.sum(rel_L2_error(u2_pred, coeff_u2))
+            train_rel_L2_error_p += torch.sum(rel_L2_error(p_pred, coeff_p))
+    
+    train_rel_L2_error_u1 /= num_samples
+    train_rel_L2_error_u2 /= num_samples
+    train_rel_L2_error_p /= num_samples
     
 
     if epoch%100==0:
         ## Test
         num_samples=0
-        test_rel_L2_error = 0
+        test_rel_L2_error_u1 = 0
+        test_rel_L2_error_u2 = 0
+        test_rel_L2_error_p = 0
         for batch_idx, sample_batch in enumerate(validateloader):
             with torch.no_grad():
                 model.eval()
-                coeff_u = sample_batch['coeff_u']
-                c_value = sample_batch['c_value'].cuda()
-                input_matrix = sample_batch['input_matrix'].cuda()
-                _,u_pred = closure(model, c_value, input_matrix, STIFF, CONV, LOAD_VECTOR)
+                coeff_u1 = sample_batch['coeff_u1']
+                coeff_u2 = sample_batch['coeff_u2']
+                coeff_p = sample_batch['coeff_p']
+                coeff_f = sample_batch['coeff_f'].cuda()
+                load_vec_f = sample_batch['load_vec_f'].cuda()
+                _,u_pred = closure(model, coeff_f, load_vec_f, MATRIX, RESOL_IN)
                 u_pred=u_pred.squeeze().detach().cpu()
-                coeff_u=coeff_u.squeeze()
-                test_rel_L2_error += torch.sum(rel_L2_error(u_pred, coeff_u))
+                u1_pred=u_pred[:,torch.tensor(IDX_SOL[0])]
+                u2_pred=u_pred[:,torch.tensor(IDX_SOL[1])]
+                p_pred=u_pred[:,torch.tensor(IDX_SOL[2])]
 
-                num_samples += coeff_u.shape[0]
-        test_rel_L2_error /= num_samples
+                test_rel_L2_error_u1 += torch.sum(rel_L2_error(u1_pred, coeff_u1))
+                test_rel_L2_error_u2 += torch.sum(rel_L2_error(u2_pred, coeff_u2))
+                test_rel_L2_error_p += torch.sum(rel_L2_error(p_pred, coeff_p))
+
+                num_samples += coeff_u1.shape[0]
+
+        test_rel_L2_error_u1 /= num_samples
+        test_rel_L2_error_u2 /= num_samples
+        test_rel_L2_error_p /= num_samples
         
         ##Save and print
         losses.append(loss_total)
-        train_rel_L2_errors.append(train_rel_L2_error)
-        test_rel_L2_errors.append(test_rel_L2_error)
+        train_rel_L2_errors_u1.append(train_rel_L2_error_u1)
+        train_rel_L2_errors_u2.append(train_rel_L2_error_u2)
+        train_rel_L2_errors_p.append(train_rel_L2_error_p)
+
+        test_rel_L2_errors_u1.append(test_rel_L2_error_u1)
+        test_rel_L2_errors_u2.append(test_rel_L2_error_u2)
+        test_rel_L2_errors_p.append(test_rel_L2_error_p)
         torch.save({'model_state_dict': model.state_dict(),
                     'losses': losses,
-                    'train_rel_L2_errors': train_rel_L2_errors,
-                    'test_rel_L2_errors': test_rel_L2_errors
+                    'train_rel_L2_errors_u1': train_rel_L2_errors_u1,
+                    'train_rel_L2_errors_u2': train_rel_L2_errors_u2,
+                    'train_rel_L2_errors_p': train_rel_L2_errors_p,
+                    'test_rel_L2_errors_u1': test_rel_L2_errors_u1,
+                    'test_rel_L2_errors_u2': test_rel_L2_errors_u2,
+                    'test_rel_L2_errors_p': test_rel_L2_errors_p,
         }, PATH + '/model.pt')
-        print("Epoch {0:4d} (Time:{1:4d}s): weak_form_loss {2:.5f}, train_rel_error {3:.5f}, test_rel_error {4:.5f}".format(epoch, int(time.time()-time0), loss_total, train_rel_L2_error, test_rel_L2_error))
-
+        # print("Epoch {0:4d}: weak_form_loss {1:4.1f}, train_rel_error {2:.5f}, test_rel_error {3:.5f}".format(epoch, loss_total, train_rel_L2_error, test_rel_L2_error))
+        print(f"Epoch {epoch:4d}: wloss {loss_total:2.5f}, train_rel {train_rel_L2_error_u1:.5f}/{train_rel_L2_error_u2:.5f}/{train_rel_L2_error_p:.5f}, test_rel {test_rel_L2_error_u1:.5f}/{test_rel_L2_error_u2:.5f}/{test_rel_L2_error_p:.5f}")
         
 torch.save({'model_state_dict': model.state_dict(),
             'losses': losses,
-            'train_rel_L2_errors': train_rel_L2_errors,
-            'test_rel_L2_errors': test_rel_L2_errors
+            'train_rel_L2_errors_u1': train_rel_L2_errors_u1,
+            'train_rel_L2_errors_u2': train_rel_L2_errors_u2,
+            'train_rel_L2_errors_p': train_rel_L2_errors_p,
+            'test_rel_L2_errors_u1': test_rel_L2_errors_u1,
+            'test_rel_L2_errors_u2': test_rel_L2_errors_u2,
+            'test_rel_L2_errors_p': test_rel_L2_errors_p,
 }, PATH + '/model.pt')
         
 train_t=time.time()-time0

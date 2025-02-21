@@ -84,6 +84,29 @@ With preconditioning
 python3 -u FEONet_2D.py test_precond --seed 0 --gpu 2 --type circlehole --num_train_data 1000 --num_validate_data 1000 --basis_order 2 --ne 555 --model CNN2D --resol_in 20 --blocks 4 --ks 5 --filters 32 --epochs 100000 --do_precond > train/log_precond.out
 ```
 
+## 4. 2D_stokes (p.15 & eq.(3.7) in the paper(1)).
+
+In the folder "2D_stokes":
+
+### Step1 - Assemble and save the matrices
+To assemble the matrices, use the FeniCS-based code
+```
+FeniCS_assemble.ipynb
+```
+
+### Step2 - Save the train and test data by interpolation.
+Using the 'create_data_interpol.py' code, you can interpolate using exact data.
+```
+python3 create_data_interpol.py --type stokes --num_data 1000 --basis_order 2x1 --kind train --ne 72 --ne_exact 450
+```
+```
+python3 create_data_interpol.py --type stokes --num_data 1000 --basis_order 2x1 --kind validate --ne 72 --ne_exact 450
+```
+
+### Step3 - Train the FEONet
+```
+python3 -u FEONet_2D.py test_re --seed 1 --gpu 4 --type stokes --num_train_data 1000 --num_validate_data 1000 --basis_order 2x1 --ne 72 --model CNN2D --resol_in 50 --blocks 4 --ks 5 --filters 32 --epochs 100000 > train/log.out
+```
 ## Citations
 
 ```

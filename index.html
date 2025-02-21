@@ -90,6 +90,17 @@
       </div>
     </section>
 
+    <section class="section">
+      <div class="container is-max-desktop">
+        <p class="normal-text">
+          For a follow-up study on error analysis related to this paper, please refer to the following work:
+          <br>
+          <strong><a href="https://arxiv.org/abs/2404.17868" target="_blank">
+          Error Analysis for Finite Element Operator Learning Methods for Solving Parametric Second-Order Elliptic PDEs</a></strong>.
+        </p>
+      </div>
+    </section>
+
     <!-- teasor -->
     <section class="hero">
       <div class="container is-max-desktop">
@@ -140,16 +151,7 @@
       </div>
     </section>
 -->
-<section class="section">
-  <div class="container is-max-desktop">
-    <p class="normal-text">
-      For a follow-up study on error analysis related to this paper, please refer to the following work:
-      <br>
-      <strong><a href="https://arxiv.org/abs/2404.17868" target="_blank">
-      Error Analysis for Finite Element Operator Learning Methods for Solving Parametric Second-Order Elliptic PDEs</a></strong>.
-    </p>
-  </div>
-</section>
+
 
 
     <section class="section">
@@ -174,11 +176,15 @@
             Results
           </h2>
           <img src="./assets/domain_profile.png" width="90%" style="display: block; margin: auto" />
-          <p align="center" class="normal-text">
+          <p align="center" class="normal-text" style="margin-bottom: 60px;">
             Solution profiles for complex geometries.
           </p>
+          <img src="./assets/rate_horizon.png" width="90%" style="display: block; margin: auto" />
+          <p align="center" class="normal-text" style="margin-bottom: 60px;">
+            Rel. L2 error of the FEONet with respect to the number of elements. One of the intriguing aspects is that the theoretical results on the convergence error rate of the FEONet are also observable.
+          </p>
           <img src="./assets/bdrylayer.png" width="90%" style="display: block; margin: auto" />
-          <p align="center" class="normal-text">
+          <p align="center" class="normal-text" style="margin-bottom: 60px;">
             Input function f and the corresponding approximate solution u obtained by various deep-learning-based methods for the singular perturbation problem with epsilon=1e-5.
           </p>
         </div>
@@ -195,10 +201,10 @@
         <div class="box bibtex-box">
           <pre>
 @article{lee2023finite,
-  title={Finite element operator network for solving parametric pdes},
+  title={Finite Element Operator Network for Solving Elliptic-type parametric PDEs},
   author={Lee, Jae Yong and Ko, Seungchan and Hong, Youngjoon},
-  journal={arXiv preprint arXiv:2308.04690},
-  year={2023}
+  journal={To apper in SIAM Journal on Scientific Computing},
+  year={2025}
 }
 @article{hong2024error,
   title={Error analysis for finite element operator learning methods for solving parametric second-order elliptic PDEs},

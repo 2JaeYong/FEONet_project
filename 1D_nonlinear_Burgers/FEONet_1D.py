@@ -216,12 +216,6 @@ def log_gparams(gparams):
                 f.write(entry)
     os.chdir(cwd)
 
-
-def log_path(path):
-    with open("paths.txt", "a") as f:
-        f.write(str(path) + '\n')
-        f.close()
-log_path(PATH)
 log_gparams(gparams)
 ################################################
 time0 = time.time()
